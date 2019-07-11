@@ -108,9 +108,9 @@ protected:
   void createGeometry();
 
   /**
-   * @brief Transforms from the robot's frame to the fixed frame.
+   * @brief Transforms the tiles into the fixed frame.
    *
-   * There are four relevant frames: The robot's frame, Rviz's fixed frame, the ENU/ NED/ NWU world fixed frame, and
+   * There are four relevant frames: The NavSatFix frame, Rviz's fixed frame, the ENU/ NED/ NWU world fixed frame, and
    * the tile frame.
    *
    * * The NavSatFix frame is a frame rigidly attached to the robot.
@@ -123,8 +123,7 @@ protected:
    *
    * Since the code works with ENU internally, the tiles' y-coordinate is flipped so that y points to north. Therefore
    * we can align the tiles to north by putting them into the frame "map" with an orientation of
-   * Ogre::Quaternion::IDENTITY. We place the tiles indirectly into the "map" frame by using the "map" frame as the
-   * pseudo fixed frame.
+   * Ogre::Quaternion::IDENTITY.
    *
    * Thus we will end up with the tile mesh being aligned to the north regardless of which fixed frame is chosen.
    */
@@ -170,7 +169,6 @@ protected:
   TileCacheDelay<OgreTile> tileCache_;
   /// Last request()ed tile id
   boost::optional<TileId> lastTileId_;
-  std::string lastFixedFrame_;
 
   /**
    * Calculate the tile width/ height in meter

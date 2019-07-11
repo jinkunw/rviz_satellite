@@ -110,7 +110,6 @@ AerialMapDisplay::~AerialMapDisplay()
 
 void AerialMapDisplay::onEnable()
 {
-  lastFixedFrame_ = context_->getFrameManager()->getFixedFrame();
   subscribe();
 }
 
@@ -118,7 +117,6 @@ void AerialMapDisplay::onDisable()
 {
   unsubscribe();
   clear();
-  context_->getFrameManager()->setFixedFrame(lastFixedFrame_);
 }
 
 void AerialMapDisplay::subscribe()
@@ -468,6 +466,38 @@ void AerialMapDisplay::assembleScene()
   tileCache_.purge({ tileId, blocks_ });
 }
 
+// rotation matrix for rotating the current frame to ENU
+Ogre::Matrix3 rotateToENU(int convention)
+{
+  if (convention == FRAME_CONVENTION_XYZ_ENU)
+  {
+    return Ogre::Matrix3::IDENTITY;
+  }
+  else if (convention == FRAME_CONVENTION_XYZ_NED)
+  {
+    // XYZ->NED will cause the map to appear reversed when viewed from above (from +z).
+    // clang-format off
+    Ogre::Matrix3 const xyz_R_ned(0, 1, 0,
+                                  1, 0, 0,
+                                  0, 0, -1);
+    // clang-format on
+    return xyz_R_ned.Transpose();
+  }
+  else if (convention == FRAME_CONVENTION_XYZ_NWU)
+  {
+    // clang-format off
+    Ogre::Matrix3 const xyz_R_nwu(0, -1, 0,
+                                  1, 0, 0,
+                                  0, 0, 1);
+    // clang-format on
+    return xyz_R_nwu.Transpose();
+  }
+  else
+  {
+    assert(false);
+  }
+}
+
 void AerialMapDisplay::transformAerialMap()
 {
   if (!isEnabled())
@@ -475,44 +505,42 @@ void AerialMapDisplay::transformAerialMap()
     return;
   }
 
-  // the parent frame of this scene node
-  static std::string const mapFrame = "map";
+  static std::string const frameMap = "map";
+  std::string const frameNavSatFix = ref_fix_.header.frame_id;
 
-  // the robot's frame
-  std::string const frame = ref_fix_.header.frame_id;
+  Ogre::Quaternion orientation, orientationOffset, orientationUnused;
+  Ogre::Vector3 position, positionUnused;
 
-  // note: the orientation is not used on purpose
-  Ogre::Quaternion orientation;
-  Ogre::Vector3 position;
-
-  // can mapFrame be used as a fixed frame?
-  std::string errMsg;
-  if (context_->getFrameManager()->frameHasProblems(mapFrame, ros::Time{}, errMsg) ||
-      context_->getFrameManager()->transformHasProblems(mapFrame, ros::Time{}, errMsg))
-  {
-    context_->getFrameManager()->setFixedFrame(lastFixedFrame_);
-    setStatus(StatusProperty::Error, "Transform", QString::fromStdString(errMsg));
-    return;
-  }
-
-  // Set the pseudo fixed frame to map so that we can align the tiles to north just by setting identity as the
-  // orientation
-  context_->getFrameManager()->setFixedFrame(mapFrame);
-
-  // Get the latest transform between the robot frame and fixed frame from the FrameManager
-  if (!context_->getFrameManager()->getTransform(frame, ros::Time(), position, orientation))
+  if (!context_->getFrameManager()->getTransform(frameMap, ref_fix_.header.stamp, positionUnused, orientation))
   {
     // display error
     std::string error;
-    if (context_->getFrameManager()->transformHasProblems(frame, ros::Time(), error))
+    if (context_->getFrameManager()->transformHasProblems(frameMap, ref_fix_.header.stamp, error))
     {
       setStatus(StatusProperty::Error, "Transform", QString::fromStdString(error));
     }
     else
     {
       setStatus(StatusProperty::Error, "Transform",
-                "Could not transform from [" + QString::fromStdString(frame) + "] to Fixed Frame [" + fixed_frame_ +
+                "Could not transform from [" + QString::fromStdString(frameMap) + "] to Fixed Frame [" + fixed_frame_ +
                     "] for an unknown reason");
+    }
+    return;
+  }
+
+  if (!context_->getFrameManager()->getTransform(frameNavSatFix, ref_fix_.header.stamp, position, orientationUnused))
+  {
+    // display error
+    std::string error;
+    if (context_->getFrameManager()->transformHasProblems(frameNavSatFix, ref_fix_.header.stamp, error))
+    {
+      setStatus(StatusProperty::Error, "Transform", QString::fromStdString(error));
+    }
+    else
+    {
+      setStatus(StatusProperty::Error, "Transform",
+                "Could not transform from [" + QString::fromStdString(frameNavSatFix) + "] to Fixed Frame [" +
+                    fixed_frame_ + "] for an unknown reason");
     }
     return;
   }
@@ -533,39 +561,32 @@ void AerialMapDisplay::transformAerialMap()
   auto const originOffsetX = center.x - std::floor(center.x);
   auto const originOffsetY = 1 - center.y + std::floor(center.y);  // y coord is flipped
   double const tile_w_h_m = getTileWH();
-  position.x -= originOffsetX * tile_w_h_m;
-  position.y -= originOffsetY * tile_w_h_m;
-  scene_node_->setPosition(position);
 
-  int const convention = frame_convention_property_->getOptionInt();
-  if (convention == FRAME_CONVENTION_XYZ_ENU)
+  if (!context_->getFrameManager()->getTransform(frameMap, ref_fix_.header.stamp, positionUnused, orientationOffset))
   {
-    // ENU corresponds to our default drawing method
-    scene_node_->setOrientation(Ogre::Quaternion::IDENTITY);
+    // display error
+    std::string error;
+    if (context_->getFrameManager()->transformHasProblems(frameMap, ref_fix_.header.stamp, error))
+    {
+      setStatus(StatusProperty::Error, "Transform", QString::fromStdString(error));
+    }
+    else
+    {
+      setStatus(StatusProperty::Error, "Transform",
+                "Could not transform from [" + QString::fromStdString(frameMap) + "] to Fixed Frame [" + fixed_frame_ +
+                    "] for an unknown reason");
+    }
   }
-  else if (convention == FRAME_CONVENTION_XYZ_NED)
-  {
-    // XYZ->NED will cause the map to appear reversed when viewed from above (from +z).
-    // clang-format off
-		Ogre::Matrix3 const xyz_R_ned(0, 1, 0,
-		                              1, 0, 0,
-		                              0, 0, -1);
-    // clang-format on
-    scene_node_->setOrientation(xyz_R_ned.Transpose());
-  }
-  else if (convention == FRAME_CONVENTION_XYZ_NWU)
-  {
-    // clang-format off
-		Ogre::Matrix3 const xyz_R_nwu(0, -1, 0,
-		                              1, 0, 0,
-		                              0, 0, 1);
-    // clang-format on
-    scene_node_->setOrientation(xyz_R_nwu.Transpose());
-  }
-  else
-  {
-    ROS_ERROR_STREAM("Invalid convention code: " << convention);
-  }
+
+  Ogre::Vector3 offsetMap =
+      orientationOffset * Ogre::Vector3(-originOffsetX * tile_w_h_m, -originOffsetY * tile_w_h_m, 0);
+
+  scene_node_->setPosition(position + offsetMap);
+
+  Ogre::Matrix3 orientation_;
+  orientation.ToRotationMatrix(orientation_);
+  auto rotateFrame = rotateToENU(frame_convention_property_->getOptionInt());
+  scene_node_->setOrientation(rotateFrame * orientation_);
 }
 
 void AerialMapDisplay::fixedFrameChanged()
