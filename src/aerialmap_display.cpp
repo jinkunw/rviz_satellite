@@ -42,13 +42,33 @@ limitations under the License. */
 #include "aerialmap_display.h"
 #include "General.h"
 
+#include <visualization_msgs/InteractiveMarker.h>
+#include <visualization_msgs/Marker.h>
+
 int constexpr FRAME_CONVENTION_XYZ_ENU = 0;  //  X -> East, Y -> North
 int constexpr FRAME_CONVENTION_XYZ_NED = 1;  //  X -> North, Y -> East
 int constexpr FRAME_CONVENTION_XYZ_NWU = 2;  //  X -> North, Y -> West
 
 namespace rviz
 {
-AerialMapDisplay::AerialMapDisplay() : Display(), dirty_(false), received_msg_(false)
+
+visualization_msgs::Marker makeBox( visualization_msgs::InteractiveMarker &msg )
+{
+  visualization_msgs::Marker marker;
+
+  marker.type = visualization_msgs::Marker::CUBE;
+  marker.scale.x = msg.scale * 0.45;
+  marker.scale.y = msg.scale * 0.45;
+  marker.scale.z = msg.scale * 0.45;
+  marker.color.r = 0.5;
+  marker.color.g = 0.5;
+  marker.color.b = 0.5;
+  marker.color.a = 1.0;
+
+  return marker;
+}
+
+AerialMapDisplay::AerialMapDisplay() : Display(), dirty_(false), received_msg_(false), server_("servre")
 {
   topic_property_ =
       new RosTopicProperty("Topic", "", QString::fromStdString(ros::message_traits::datatype<sensor_msgs::NavSatFix>()),
@@ -100,6 +120,52 @@ AerialMapDisplay::AerialMapDisplay() : Display(), dirty_(false), received_msg_(f
 
   //  updating one triggers reload
   updateBlocks();
+
+  visualization_msgs::InteractiveMarker int_marker;
+  int_marker.header.frame_id = "world";
+  auto position = tf::Vector3(0, 0, 1.0);
+  tf::pointTFToMsg(position, int_marker.pose.position);
+  int_marker.scale = 10;
+
+  int_marker.name = "moving";
+  int_marker.description = "Marker Attached to a\nMoving Frame";
+
+  visualization_msgs::InteractiveMarkerControl control;
+
+  control.orientation.w = 1;
+  control.orientation.x = 0;
+  control.orientation.y = 1;
+  control.orientation.z = 0;
+  control.interaction_mode = visualization_msgs::InteractiveMarkerControl::ROTATE_AXIS;
+  int_marker.controls.push_back(control);
+
+  control.interaction_mode = visualization_msgs::InteractiveMarkerControl::MOVE_PLANE;
+  control.always_visible = true;
+  control.markers.push_back( makeBox(int_marker) );
+  int_marker.controls.push_back(control);
+
+  server_.insert(int_marker);
+  server_.setCallback(int_marker.name, boost::bind(&AerialMapDisplay::processFeedback, this, _1));
+  server_.applyChanges();
+}
+
+void AerialMapDisplay::processFeedback( const visualization_msgs::InteractiveMarkerFeedbackConstPtr &feedback )
+{
+  if ( feedback->event_type == visualization_msgs::InteractiveMarkerFeedback::POSE_UPDATE)
+  {
+    Ogre::Vector3 position;
+    position.x = feedback->pose.position.x;
+    position.y = feedback->pose.position.y;
+    position.z = 0;
+    Ogre::Quaternion q;
+    q.w = feedback->pose.orientation.w;
+    q.x = feedback->pose.orientation.x;
+    q.y = feedback->pose.orientation.y;
+    q.z = feedback->pose.orientation.z;
+    scene_node_->setPosition(position);
+    scene_node_->setOrientation(q);
+  }
+  server_.applyChanges();
 }
 
 AerialMapDisplay::~AerialMapDisplay()
@@ -476,7 +542,7 @@ void AerialMapDisplay::transformAerialMap()
   }
 
   // the parent frame of this scene node
-  static std::string const mapFrame = "map";
+  static std::string const mapFrame = "world";
 
   // the robot's frame
   std::string const frame = ref_fix_.header.frame_id;
@@ -547,9 +613,9 @@ void AerialMapDisplay::transformAerialMap()
   {
     // XYZ->NED will cause the map to appear reversed when viewed from above (from +z).
     // clang-format off
-		Ogre::Matrix3 const xyz_R_ned(0, 1, 0,
-		                              1, 0, 0,
-		                              0, 0, -1);
+		Ogre::Matrix3 const xyz_R_ned(1, 0, 0,
+		                              0, 1, 0,
+		                              0, 0, 1);
     // clang-format on
     scene_node_->setOrientation(xyz_R_ned.Transpose());
   }

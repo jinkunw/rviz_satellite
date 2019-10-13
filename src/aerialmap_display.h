@@ -40,6 +40,9 @@ limitations under the License. */
 #include "TileCacheDelay.h"
 #include "OgreTile.h"
 
+#include <interactive_markers/interactive_marker_server.h>
+#include <visualization_msgs/InteractiveMarker.h>
+
 namespace Ogre
 {
 class ManualObject;
@@ -171,6 +174,11 @@ protected:
   /// Last request()ed tile id
   boost::optional<TileId> lastTileId_;
   std::string lastFixedFrame_;
+
+  ros::Subscriber tile_uri_sub_;
+
+  interactive_markers::InteractiveMarkerServer server_;
+  void processFeedback(const visualization_msgs::InteractiveMarkerFeedbackConstPtr& feedback);
 
   /**
    * Calculate the tile width/ height in meter
